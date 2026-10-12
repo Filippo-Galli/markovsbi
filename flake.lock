@@ -1,0 +1,137 @@
+{
+  "nodes": {
+    "UMNN": {
+      "inputs": {
+        "nixpkgs": [
+          "sbi",
+          "nflows",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1790944404,
+        "narHash": "sha256-sHNYeX0ZWLuHser6k/tF9KM6EfAIDb90/mzOoxjsmdE=",
+        "owner": "Filippo-Galli",
+        "repo": "UMNN",
+        "rev": "93bb7a1f1b440f5c27ce541ba4a53fde1bdf1df9",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Filippo-Galli",
+        "repo": "UMNN",
+        "type": "github"
+      }
+    },
+    "nflows": {
+      "inputs": {
+        "UMNN": "UMNN",
+        "nixpkgs": [
+          "sbi",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1790945644,
+        "narHash": "sha256-aWpYpUMn/uaHbjLmLJJ42EZt9G9hOUL0RCgy5ZgkGQA=",
+        "owner": "Filippo-Galli",
+        "repo": "nflows",
+        "rev": "228ae1eea4496ec7304b7d9d21160d6f20a8cecf",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Filippo-Galli",
+        "repo": "nflows",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1791594108,
+        "narHash": "sha256-XK4KceonkwD8LuMAt/vNrz982mXJM5jeHAxMwsUXXAQ=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "6510408d147d8c5e6d76043e899e9251756f6a75",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "nixpkgs": "nixpkgs",
+        "sbi": "sbi"
+      }
+    },
+    "sbi": {
+      "inputs": {
+        "nflows": "nflows",
+        "nixpkgs": [
+          "nixpkgs"
+        ],
+        "torchtestcase": "torchtestcase",
+        "zuko": "zuko"
+      },
+      "locked": {
+        "lastModified": 1791363389,
+        "narHash": "sha256-wp5JhUYWVc+QFo67Aa65Qd5fyrBUJEUNLuf0VKKljgk=",
+        "owner": "Filippo-Galli",
+        "repo": "sbi",
+        "rev": "9c95d49139aebae5c683ab369c23feaaa421faf4",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Filippo-Galli",
+        "repo": "sbi",
+        "type": "github"
+      }
+    },
+    "torchtestcase": {
+      "inputs": {
+        "nixpkgs": [
+          "sbi",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1790947693,
+        "narHash": "sha256-adGUcacuQYkkCx0KYTrt2/mYFT/GQLWOsWyYnkcM9po=",
+        "owner": "Filippo-Galli",
+        "repo": "torch-test-case",
+        "rev": "5cff130c331d33be8e1c326149ed7b0445ddfa92",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Filippo-Galli",
+        "repo": "torch-test-case",
+        "type": "github"
+      }
+    },
+    "zuko": {
+      "inputs": {
+        "nixpkgs": [
+          "sbi",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1790946245,
+        "narHash": "sha256-zDFXAa5lKJTQuWbCTaYD5mQCYwKhu5FT/rLmT6+wXrU=",
+        "owner": "Filippo-Galli",
+        "repo": "zuko",
+        "rev": "454eac9abaf9076fd137e1ba59cd6a4895de34b6",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Filippo-Galli",
+        "repo": "zuko",
+        "type": "github"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}
