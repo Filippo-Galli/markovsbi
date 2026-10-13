@@ -1,19 +1,20 @@
+from markovsbi.tasks.ar1 import AR1
+from markovsbi.tasks.double_well import DoubleWell
+from markovsbi.tasks.kolmogorov_flow import KolmogorovFlow
+from markovsbi.tasks.linear_sde_task import DataHighDimSDE, GeneralSDE, PeriodicSDE
+from markovsbi.tasks.lotka_volterra import LotkaVolterra
+from markovsbi.tasks.mixture_rw_nd import MixtureRW2D, MixtureRW5D
 from markovsbi.tasks.simple_nd import (
     Simple1D,
-    Simple1DStationary,
     Simple1DNonstationary,
-    Simple2DNonstationary,
-    Simple10DNonstationary,
+    Simple1DStationary,
     Simple2D,
+    Simple2DNonstationary,
     Simple2DStationary,
+    Simple10DNonstationary,
     Simple10DStationary,
 )
-from markovsbi.tasks.lotka_volterra import LotkaVolterra
-from markovsbi.tasks.linear_sde_task import PeriodicSDE, GeneralSDE, DataHighDimSDE
-from markovsbi.tasks.kolmogorov_flow import KolmogorovFlow
-from markovsbi.tasks.mixture_rw_nd import MixtureRW2D, MixtureRW5D
 from markovsbi.tasks.sir import SIR
-from markovsbi.tasks.double_well import DoubleWell
 
 
 def get_task(task_name, **kwargs):
@@ -51,5 +52,7 @@ def get_task(task_name, **kwargs):
         return DoubleWell(**kwargs)
     elif task_name.lower() == "kolmogorov_flow":
         return KolmogorovFlow(64)
+    elif task_name.lower() == "ar1":
+        return AR1(**kwargs)
     else:
         raise ValueError(f"Task {task_name} not found.")

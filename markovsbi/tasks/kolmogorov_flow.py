@@ -1,6 +1,9 @@
 from functools import partial
 from markovsbi.tasks.base import Task
-import jax_cfd.base as cfd
+try:
+    import jax_cfd.base as cfd
+except (ImportError, ModuleNotFoundError):
+    cfd = None
 import math
 
 from markovsbi.utils.prior_utils import Normal
@@ -14,6 +17,11 @@ import jax.numpy as jnp
 class KolmogorovFlow(Task):
     def __init__(self, size: int, dt=0.001, inner_steps=100, sigma=None):
         super().__init__("kolmogorov_flow")
+
+        if cfd is None:
+            raise ImportError(
+                "KolmogorovFlow requires 'jax_cfd', but it is not installed."
+            )
 
         self.dt = dt
         self.inner_steps = inner_steps

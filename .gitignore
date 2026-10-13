@@ -98,3 +98,5 @@ results/*
 *.pyns
 
 results_old/*
+
+__marimo__/
