@@ -1,16 +1,17 @@
+from typing import Callable, Optional
+
 import jax
 import jax.numpy as jnp
-
-from typing import Callable, Optional
 from jax.typing import ArrayLike
+
 from markovsbi.models.utils import get_windows
-from markovsbi.utils.marginalize import marginalize
 from markovsbi.utils.denoise import denoise
+from markovsbi.utils.marginalize import marginalize
 from markovsbi.utils.product_mixtures import build_gauss_mixture_correction_term
 from markovsbi.utils.util_linalg import (
+    add_diag_or_dense,
     mv_diag_or_dense,
     solve_diag_or_dense,
-    add_diag_or_dense,
 )
 
 
@@ -117,6 +118,7 @@ class UncorrectedScoreFn(ScoreFn):
         prior_score = self.marginal_prior_score_fn(a, theta)
         N = base_score.shape[0]
 
+        # (1 - N) * prior_score + sum(score(theta | x_t))
         return (1 - N) * prior_score + base_score.sum(0)
 
 
@@ -281,6 +283,8 @@ class GaussCorrectedScoreFn(UncorrectedScoreFn):
         window_stride = window_size - self.kwargs.get("window_stride", window_stride)
         precission_nugget = self.kwargs.get("precission_nugget", precission_nugget)
         diag = self.kwargs.get("diag", diag)
+        if input_shape[0] == 1:
+            diag = True
         ensure_valid = self.kwargs.get("ensure_valid", ensure_valid)
         num_steps = self.kwargs.get("num_steps", num_steps)
         num_samples = self.kwargs.get("num_samples", num_samples)
@@ -355,8 +359,8 @@ class GaussCorrectedScoreFn(UncorrectedScoreFn):
                     individual_precissions_corrected = (
                         individual_precissions + Lam_corr[None, ...]
                     )
-                self.posterior_precission_est_fn = (
-                    lambda x: individual_precissions_corrected
+                self.posterior_precission_est_fn = lambda x: (
+                    individual_precissions_corrected
                 )
             else:
                 self.posterior_precission_est_fn = lambda x: individual_precissions
@@ -453,8 +457,8 @@ class GaussMixtureScoreFn(UncorrectedScoreFn):
         else:
             from markovsbi.sampling.kernels.euler_maruyama import EulerMaruyama
             from markovsbi.sampling.sample import Diffuser
-            from markovsbi.utils.product_mixtures import kmeans, compute_mixture_params
             from markovsbi.utils.prior_utils import MixtureNormal
+            from markovsbi.utils.product_mixtures import compute_mixture_params, kmeans
 
             base_score = ScoreFn(self.score_net, self.params, self.sde, self.prior)
             num_samples = num_samples * input_shape[0]
@@ -643,3 +647,250 @@ def project_psd(A, min_eig=1e-3):
     eigvals, eigvecs = jnp.linalg.eigh(A)
     eigvals = jnp.maximum(eigvals, min_eig)
     return eigvecs @ jnp.diag(eigvals) @ jnp.transpose(eigvecs)
+
+
+def prepare_masked_conditions(x_o: ArrayLike):
+    """Builds transition conditions (m=1) and intermediate marginal conditions (m=0) for trajectory x_o.
+    
+    Returns:
+        cond_trans: shape (L - 1, 2, D_x + 1), where step t is [x_t, 1] and step t+1 is [x_{t+1}, 1].
+        cond_marg: shape (L - 2, 2, D_x + 1), where step t is [x_t, 1] and step t+1 is [0, 0].
+    """
+    x_o = jnp.asarray(x_o)
+    if x_o.ndim == 1:
+        x_o = x_o[:, None]
+    L = x_o.shape[0]
+
+    x_t = x_o[:-1]
+    x_tp1 = x_o[1:]
+    ones = jnp.ones((L - 1, 1))
+
+    step_t = jnp.concatenate([x_t, ones], axis=-1)
+    step_tp1 = jnp.concatenate([x_tp1, ones], axis=-1)
+    cond_trans = jnp.stack([step_t, step_tp1], axis=1)  # (L - 1, 2, D_x + 1)
+
+    if L > 2:
+        x_inter = x_o[1:-1]
+        zeros_x = jnp.zeros_like(x_inter)
+        zeros_m = jnp.zeros((L - 2, 1))
+
+        step_inter = jnp.concatenate([x_inter, jnp.ones_like(zeros_m)], axis=-1)
+        step_masked = jnp.concatenate([zeros_x, zeros_m], axis=-1)
+        cond_marg = jnp.stack([step_inter, step_masked], axis=1)  # (L - 2, 2, D_x + 1)
+    else:
+        cond_marg = None
+
+    return cond_trans, cond_marg
+
+
+class MaskedScoreFn(ScoreFn):
+    """Direct uncorrected score composition from Geffner et al. (2023).
+
+    s_composed = sum_{t=0}^{T-1} s(theta | x_t, x_{t+1}, 1) - sum_{t=1}^{T-1} s(theta | x_t, 0, 0)
+    """
+
+    def __init__(self, score_net: Callable, params: ArrayLike, sde=None, prior=None):
+        super().__init__(score_net, params, sde, prior)
+
+    def __call__(self, a, theta, x_o, **kwargs):
+        theta = jnp.atleast_1d(theta)
+        d = theta.shape[-1]
+        cond_trans, cond_marg = prepare_masked_conditions(x_o)
+
+        N_t = cond_trans.shape[0]
+        th_rep_t = jnp.repeat(theta[None, :], N_t, axis=0)
+        a_rep_t = jnp.repeat(jnp.atleast_1d(a), N_t)
+        s_trans = self.score_net(self.params, a_rep_t, th_rep_t, cond_trans).reshape(N_t, d)
+        total_score = jnp.sum(s_trans, axis=0)
+
+        if cond_marg is not None:
+            N_m = cond_marg.shape[0]
+            th_rep_m = jnp.repeat(theta[None, :], N_m, axis=0)
+            a_rep_m = jnp.repeat(jnp.atleast_1d(a), N_m)
+            s_marg = self.score_net(self.params, a_rep_m, th_rep_m, cond_marg).reshape(N_m, d)
+            total_score = total_score - jnp.sum(s_marg, axis=0)
+
+        return jnp.squeeze(total_score)
+
+
+class MaskedJacCorrectedScoreFn(ScoreFn):
+    """Linhart et al. (2024) score correction using Jacobian-based precision matrices.
+
+    Approximates local precision matrices via the score network Jacobian:
+        Sigma_{k, t, t+1}^{-1} = (mu^2 / sigma^2) (I + sigma^2 J_{t, t+1})^{-1}
+        Sigma_{k, t}^{-1} = (mu^2 / sigma^2) (I + sigma^2 J_t)^{-1}
+        Lambda = sum_t Sigma_{k, t, t+1}^{-1} - sum_t Sigma_{k, t}^{-1}
+        s = Lambda^{-1} [sum_t Sigma_{k, t, t+1}^{-1} s_{t, t+1} - sum_t Sigma_{k, t}^{-1} s_t]
+    """
+
+    def __init__(
+        self,
+        score_net: Callable,
+        params: ArrayLike,
+        sde,
+        prior=None,
+        min_eig: float = 1e-3,
+    ):
+        super().__init__(score_net, params, sde, prior)
+        self.min_eig = min_eig
+
+    def __call__(self, a, theta, x_o, **kwargs):
+        theta = jnp.atleast_1d(theta)
+        d = theta.shape[-1]
+        cond_trans, cond_marg = prepare_masked_conditions(x_o)
+
+        N_t = cond_trans.shape[0]
+
+        def net_trans(th):
+            th_rep = jnp.repeat(th[None, :], N_t, axis=0)
+            a_rep = jnp.repeat(jnp.atleast_1d(a), N_t)
+            return self.score_net(self.params, a_rep, th_rep, cond_trans).reshape(N_t, d)
+
+        s_trans = net_trans(theta)
+        j_trans = jax.jacfwd(net_trans)(theta).reshape(N_t, d, d)
+        j_trans = 0.5 * (j_trans + jnp.transpose(j_trans, (0, 2, 1)))
+
+        m = self.sde.mu(a)
+        std = self.sde.std(a)
+
+        def compute_prec(jac):
+            if d > 1:
+                p = (m**2 / std**2) * jnp.linalg.inv(jnp.eye(d) + std**2 * jac)
+                p = jax.vmap(project_psd)(p)
+            else:
+                p = (m**2 / std**2) / (1.0 + std**2 * jac)
+                p = jnp.clip(p, 1e-2, 1e5)
+            return p
+
+        p_trans = compute_prec(j_trans)
+        num = jnp.sum(p_trans @ s_trans[..., None], axis=0)
+        Lam = jnp.sum(p_trans, axis=0)
+
+        if cond_marg is not None:
+            N_m = cond_marg.shape[0]
+
+            def net_marg(th):
+                th_rep = jnp.repeat(th[None, :], N_m, axis=0)
+                a_rep = jnp.repeat(jnp.atleast_1d(a), N_m)
+                return self.score_net(self.params, a_rep, th_rep, cond_marg).reshape(N_m, d)
+
+            s_marg = net_marg(theta)
+            j_marg = jax.jacfwd(net_marg)(theta).reshape(N_m, d, d)
+            j_marg = 0.5 * (j_marg + jnp.transpose(j_marg, (0, 2, 1)))
+
+            p_marg = compute_prec(j_marg)
+            num = num - jnp.sum(p_marg @ s_marg[..., None], axis=0)
+            Lam = Lam - jnp.sum(p_marg, axis=0)
+
+        # Enforce positive definiteness of Lam
+        if d > 1:
+            eigvals, eigvecs = jnp.linalg.eigh(Lam)
+            eigvals = jnp.maximum(eigvals, self.min_eig)
+            Lam = eigvecs @ jnp.diag(eigvals) @ eigvecs.T
+        else:
+            Lam = jnp.maximum(Lam, self.min_eig)
+
+        score = jnp.linalg.solve(Lam, num)
+        return jnp.squeeze(score)
+
+
+class MaskedGaussCorrectedScoreFn(ScoreFn):
+    """Linhart et al. (2024) score correction using calibrated Gaussian posterior precisions.
+
+    Sigma_{k, t, t+1}^{-1} = (mu^2 / sigma^2) I + post_prec_trans
+    Sigma_{k, t}^{-1} = (mu^2 / sigma^2) I + post_prec_marg
+    """
+
+    def __init__(
+        self,
+        score_net: Callable,
+        params: ArrayLike,
+        sde,
+        prior=None,
+        post_prec_trans: Optional[ArrayLike] = None,
+        post_prec_marg: Optional[ArrayLike] = None,
+        min_eig: float = 1e-3,
+    ):
+        super().__init__(score_net, params, sde, prior)
+        self.post_prec_trans = post_prec_trans
+        self.post_prec_marg = post_prec_marg
+        self.min_eig = min_eig
+
+    def __call__(self, a, theta, x_o, **kwargs):
+        theta = jnp.atleast_1d(theta)
+        d = theta.shape[-1]
+        cond_trans, cond_marg = prepare_masked_conditions(x_o)
+
+        N_t = cond_trans.shape[0]
+        th_rep_t = jnp.repeat(theta[None, :], N_t, axis=0)
+        a_rep_t = jnp.repeat(jnp.atleast_1d(a), N_t)
+        s_trans = self.score_net(self.params, a_rep_t, th_rep_t, cond_trans).reshape(N_t, d)
+
+        m = self.sde.mu(a)
+        std = self.sde.std(a)
+        sde_prec = (m**2 / std**2) * jnp.eye(d)
+
+        p_post_t = (
+            jnp.eye(d)
+            if self.post_prec_trans is None
+            else jnp.atleast_2d(self.post_prec_trans)
+        )
+        prec_t = sde_prec + p_post_t
+
+        num = prec_t @ jnp.sum(s_trans, axis=0)[..., None]
+        Lam = N_t * prec_t
+
+        if cond_marg is not None:
+            N_m = cond_marg.shape[0]
+            th_rep_m = jnp.repeat(theta[None, :], N_m, axis=0)
+            a_rep_m = jnp.repeat(jnp.atleast_1d(a), N_m)
+            s_marg = self.score_net(self.params, a_rep_m, th_rep_m, cond_marg).reshape(N_m, d)
+
+            p_post_m = (
+                jnp.eye(d)
+                if self.post_prec_marg is None
+                else jnp.atleast_2d(self.post_prec_marg)
+            )
+            prec_m = sde_prec + p_post_m
+            num = num - prec_m @ jnp.sum(s_marg, axis=0)[..., None]
+            Lam = Lam - N_m * prec_m
+
+        if d > 1:
+            eigvals, eigvecs = jnp.linalg.eigh(Lam)
+            eigvals = jnp.maximum(eigvals, self.min_eig)
+            Lam = eigvecs @ jnp.diag(eigvals) @ eigvecs.T
+        else:
+            Lam = jnp.maximum(Lam, self.min_eig)
+
+        score = jnp.linalg.solve(Lam, num)
+        return jnp.squeeze(score)
+
+
+def MaskedCorrectedScoreFn(
+    score_net: Callable,
+    params: ArrayLike,
+    sde,
+    prior=None,
+    method: str = "jac",
+    **kwargs,
+):
+    """Factory function returning a masked score function for trajectory inference.
+
+    Args:
+        score_net: Score network.
+        params: Network parameters.
+        sde: SDE forward model.
+        prior: Prior distribution.
+        method: 'jac' (Jacobian-based), 'gauss' (calibrated covariance), or 'direct' (unweighted).
+    """
+    if method.lower() == "jac":
+        return MaskedJacCorrectedScoreFn(score_net, params, sde, prior=prior, **kwargs)
+    elif method.lower() == "gauss":
+        return MaskedGaussCorrectedScoreFn(score_net, params, sde, prior=prior, **kwargs)
+    elif method.lower() == "direct":
+        return MaskedScoreFn(score_net, params, sde=sde, prior=prior)
+    else:
+        raise ValueError(
+            f"Unknown method '{method}', choose from 'jac', 'gauss', 'direct'."
+        )
+

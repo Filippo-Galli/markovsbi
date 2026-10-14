@@ -47,6 +47,65 @@ def build_online_batch_sampler(task, T=2):
     return online_batch_sampler
 
 
+def build_masked_batch_sampler(data, p_mask: float = 0.5, jit: bool = True):
+    """Batch sampler for masked conditioning s(theta | x_t, x_{t+1} * m, m).
+    
+    Constructs conditions of shape (B, 2, D_x + 1) where:
+      - step t:   [x_t, 1.0]
+      - step t+1: [x_{t+1} * m, m]
+    Compatible with window_size=2.
+    """
+    thetas = data["thetas"]
+    xs = data["xs"]
+
+    def masked_batch_sampler(rng, batch_size):
+        rng_idx, rng_mask = jax.random.split(rng)
+        idx = jax.random.choice(rng_idx, jnp.arange(thetas.shape[0]), shape=(batch_size,))
+        theta_batch = thetas[idx]
+        x_raw = xs[idx]
+        if x_raw.ndim == 2:
+            x_raw = x_raw[:, :, None]
+
+        x_t = x_raw[:, 0, :]
+        x_tp1 = x_raw[:, 1, :]
+
+        m = jax.random.bernoulli(rng_mask, p=p_mask, shape=(batch_size, 1)).astype(jnp.float32)
+
+        step_t = jnp.concatenate([x_t, jnp.ones_like(m)], axis=-1)
+        step_tp1 = jnp.concatenate([x_tp1 * m, m], axis=-1)
+        cond = jnp.stack([step_t, step_tp1], axis=1)  # (B, 2, D_x + 1)
+        return (theta_batch, cond)
+
+    if jit:
+        return jax.jit(masked_batch_sampler, static_argnums=(1,))
+    else:
+        return masked_batch_sampler
+
+
+def build_masked_online_batch_sampler(task, T: int = 2, p_mask: float = 0.5):
+    """Online batch sampler for masked conditioning s(theta | x_t, x_{t+1} * m, m)."""
+    @partial(jax.jit, static_argnums=(1,))
+    def online_masked_batch_sampler(rng, batch_size):
+        rng_data, rng_mask = jax.random.split(rng)
+        data = task.get_data(rng_data, batch_size, T)
+        theta_batch = jnp.nan_to_num(data["thetas"])
+        x_raw = jnp.nan_to_num(data["xs"])
+        if x_raw.ndim == 2:
+            x_raw = x_raw[:, :, None]
+
+        x_t = x_raw[:, 0, :]
+        x_tp1 = x_raw[:, 1, :]
+
+        m = jax.random.bernoulli(rng_mask, p=p_mask, shape=(batch_size, 1)).astype(jnp.float32)
+
+        step_t = jnp.concatenate([x_t, jnp.ones_like(m)], axis=-1)
+        step_tp1 = jnp.concatenate([x_tp1 * m, m], axis=-1)
+        cond = jnp.stack([step_t, step_tp1], axis=1)  # (B, 2, D_x + 1)
+        return (theta_batch, cond)
+
+    return online_masked_batch_sampler
+
+
 # Loss functions
 
 
