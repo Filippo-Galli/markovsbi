@@ -92,6 +92,7 @@ target/
 *.code-workspace
 .vscode/
 results/*
+result/*
 .idea
 
 # Class diagram
@@ -100,3 +101,4 @@ results/*
 results_old/*
 
 __marimo__/
+.direnv
