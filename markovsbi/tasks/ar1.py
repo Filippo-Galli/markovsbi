@@ -89,7 +89,7 @@ class AR1(Task):
         key,
         num_simulations: int,
         T: int | None = None,
-        proposal_informed: bool = False,
+        informed_proposal: bool = False,
     ) -> dict[str, jnp.ndarray]:
         """
         Generates simulated data for the AR(1) task.
@@ -133,7 +133,7 @@ class AR1(Task):
             # t == 1 -> start directly from x_0
             return jnp.where(t == 1, x0_s, x_s)
 
-        if proposal_informed:
+        if informed_proposal:
             x_starts = jax.vmap(sample_start)(marg_keys, x0s, timesteps, thetas)  # (N,)
         else:
             x_starts = jnp.squeeze(x0s, axis=-1)  # (N,)
@@ -205,7 +205,8 @@ class AR1(Task):
         return Normal(jnp.atleast_1d(mean), jnp.atleast_1d(sigma_eps))
 
     def sequence_log_prob(self, x, a, sigma_eps=1.0):
-        """log p(x_{0:T} | a, sigma_eps), stationary initialization
+        """
+        log p(x_{0:T} | a, sigma_eps), stationary initialization
 
         Args:
             x: The sequence of states.
